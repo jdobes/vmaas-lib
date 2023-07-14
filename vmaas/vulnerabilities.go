@@ -3,6 +3,7 @@ package vmaas
 import (
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/pkg/errors"
@@ -31,8 +32,8 @@ type VulnerabilitiesCvesDetails struct {
 }
 
 type ProcessedDefinitions struct {
-	Patch         map[DefinitionID]ProcessedDefinition
-	Vulnerability map[DefinitionID]ProcessedDefinition
+	Patch         []ProcessedDefinition
+	Vulnerability []ProcessedDefinition
 }
 
 type ProcessedDefinition struct {
@@ -102,8 +103,8 @@ func evaluate(c *Cache, opts *options, request *Request) (*VulnerabilitiesCvesDe
 	}
 
 	// 1. evaluate Unpatched CVEs
-	for defID, definition := range definitions.Vulnerability {
-		cvesOval := c.OvaldefinitionID2Cves[defID]
+	for _, definition := range definitions.Vulnerability {
+		cvesOval := c.OvaldefinitionID2Cves[definition.DefinitionID]
 		definition.evaluate(c, modules, cvesOval, &cves, cves.UnpatchedCves)
 	}
 
@@ -128,8 +129,8 @@ func evaluate(c *Cache, opts *options, request *Request) (*VulnerabilitiesCvesDe
 
 	// 3. evaluate Manually Fixable CVEs
 	// if CVE is already in Unpatched or CVE list -> skip it
-	for defID, definition := range definitions.Patch {
-		cvesOval := c.OvaldefinitionID2Cves[defID]
+	for _, definition := range definitions.Patch {
+		cvesOval := c.OvaldefinitionID2Cves[definition.DefinitionID]
 		// Skip if all CVEs from definition were already found somewhere
 		allCvesFound := true
 		for _, cve := range cvesOval {
@@ -178,10 +179,8 @@ func (r *ProcessedRequest) processDefinitions(c *Cache, opts *options) (*Process
 	//       there needs to be better fallback at least to guess correctly RHEL version,
 	//       use old VMaaS repo guessing?
 	candidateDefinitions := repos2definitions(c, r.OriginalRequest)
-	definitions := ProcessedDefinitions{
-		make(map[DefinitionID]ProcessedDefinition),
-		make(map[DefinitionID]ProcessedDefinition),
-	}
+	patchDefinitions := make(map[int]ProcessedDefinition)
+	vulnerabilityDefinitions := make(map[int]ProcessedDefinition)
 
 	for pkg, parsedNevra := range r.Packages {
 		pkgNameID := c.Packagename2ID[parsedNevra.Name]
@@ -189,16 +188,17 @@ func (r *ProcessedRequest) processDefinitions(c *Cache, opts *options) (*Process
 		for _, defID := range allDefinitionsIDs {
 			if cpe, ok := candidateDefinitions[defID]; ok {
 				definition := c.OvaldefinitionDetail[defID]
+				defIDint := int(defID)
 				switch definition.DefinitionTypeID {
 				case OvalDefinitionTypePatch:
-					if _, ok := definitions.Patch[defID]; !ok {
-						definitions.Patch[defID] = ProcessedDefinition{}
+					if _, ok := patchDefinitions[defIDint]; !ok {
+						patchDefinitions[defIDint] = ProcessedDefinition{}
 					}
-					definitions.Patch[defID] = ProcessedDefinition{
+					patchDefinitions[defIDint] = ProcessedDefinition{
 						DefinitionID: definition.ID,
 						CriteriaID:   definition.CriteriaID,
 						// store CPE only for Vulnerability type, field omitted intentionally
-						Packages: append(definitions.Patch[defID].Packages, Package{
+						Packages: append(patchDefinitions[defIDint].Packages, Package{
 							Nevra:  parsedNevra,
 							NameID: pkgNameID,
 							String: pkg,
@@ -209,14 +209,14 @@ func (r *ProcessedRequest) processDefinitions(c *Cache, opts *options) (*Process
 					if !opts.evalUnfixed {
 						continue
 					}
-					if _, ok := definitions.Vulnerability[defID]; !ok {
-						definitions.Vulnerability[defID] = ProcessedDefinition{}
+					if _, ok := vulnerabilityDefinitions[defIDint]; !ok {
+						vulnerabilityDefinitions[defIDint] = ProcessedDefinition{}
 					}
-					definitions.Vulnerability[defID] = ProcessedDefinition{
+					vulnerabilityDefinitions[defIDint] = ProcessedDefinition{
 						DefinitionID: definition.ID,
 						CriteriaID:   definition.CriteriaID,
 						Cpe:          c.CpeID2Label[cpe],
-						Packages: append(definitions.Vulnerability[defID].Packages, Package{
+						Packages: append(vulnerabilityDefinitions[defIDint].Packages, Package{
 							Nevra:  parsedNevra,
 							NameID: pkgNameID,
 							String: pkg,
@@ -227,6 +227,30 @@ func (r *ProcessedRequest) processDefinitions(c *Cache, opts *options) (*Process
 				}
 			}
 		}
+	}
+
+	// Sort unique definition IDs
+	patchDefinitionsIDs := make([]int, 0, len(patchDefinitions))
+	vulnerabilityDefinitionsIDs := make([]int, 0, len(vulnerabilityDefinitions))
+	for defID := range patchDefinitions {
+		patchDefinitionsIDs = append(patchDefinitionsIDs, defID)
+	}
+	for defID := range vulnerabilityDefinitions {
+		vulnerabilityDefinitionsIDs = append(vulnerabilityDefinitionsIDs, defID)
+	}
+	sort.Ints(patchDefinitionsIDs)
+	sort.Ints(vulnerabilityDefinitionsIDs)
+
+	// Create final struct of sorted Definitions
+	definitions := ProcessedDefinitions{
+		make([]ProcessedDefinition, 0, len(patchDefinitions)),
+		make([]ProcessedDefinition, 0, len(vulnerabilityDefinitions)),
+	}
+	for _, defID := range patchDefinitionsIDs {
+		definitions.Patch = append(definitions.Patch, patchDefinitions[defID])
+	}
+	for _, defID := range vulnerabilityDefinitionsIDs {
+		definitions.Vulnerability = append(definitions.Vulnerability, vulnerabilityDefinitions[defID])
 	}
 	return &definitions, nil
 }
