@@ -1,6 +1,7 @@
 package vmaas
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -464,12 +465,16 @@ func nevraPkgID(c *Cache, n *NevraIDs) PkgID {
 }
 
 func isPkgFromEnabledModule(c *Cache, pkgID PkgID, modules map[int]bool, repoIDs repoIDMaps) bool {
+	fmt.Printf("pkgID: %v\n", pkgID)
+	fmt.Printf("modules: %v\n", modules)
 	errata := c.PkgID2ErratumIDs[pkgID]
 	for _, eid := range errata {
+		fmt.Printf("eid: %v\n", eid)
 		erratumRepos := c.ErratumID2RepoIDs[eid]
 		validRepo := false
 		for r := range repoIDs.currentReleasever {
 			if erratumRepos[r] {
+				fmt.Printf("current releasever!\n")
 				validRepo = true
 				break
 			}
@@ -477,6 +482,7 @@ func isPkgFromEnabledModule(c *Cache, pkgID PkgID, modules map[int]bool, repoIDs
 		if !validRepo {
 			for r := range repoIDs.newerReleasever {
 				if erratumRepos[r] {
+					fmt.Printf("newer releasever!\n")
 					validRepo = true
 					break
 				}
@@ -487,6 +493,7 @@ func isPkgFromEnabledModule(c *Cache, pkgID PkgID, modules map[int]bool, repoIDs
 		}
 		pkgErratum := PkgErratum{pkgID, eid}
 		errataModules := c.PkgErratum2Module[pkgErratum]
+		fmt.Printf("errataModules: %v\n", errataModules)
 		for _, em := range errataModules {
 			if modules[em] {
 				return true
@@ -685,6 +692,7 @@ func getModules(c *Cache, modules []ModuleStream) map[int]bool {
 	filteredIDs := make(map[int]bool, len(moduleIDs))
 	for m := range moduleIDs {
 		requires := c.ModuleRequires[m]
+		fmt.Printf("module %v requires: %v\n", m, requires)
 		issubset := true
 		for _, r := range requires {
 			if !moduleIDs[r] {
